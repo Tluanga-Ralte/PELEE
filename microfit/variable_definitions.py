@@ -39,8 +39,7 @@ variables_1e1p = [
 ]
 
 TKI_variables_1e1p = [
-    ("mod_delta_pt", 20, (0, 2), "$\\delta p_T$ [GeV/c] \n (mod_delta_pt)"),
-    ("delta_alpha", 20, (0, 180), "$\\delta \\alpha_T$ [degrees] \n (delta_alpha)"),
+    ("trkpid", 32, (-1, 1), "trk_pid"),
 ]
 
 loosesel_variables_1eNp = [

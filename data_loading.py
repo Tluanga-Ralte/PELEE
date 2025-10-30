@@ -21,6 +21,7 @@ from numu_tki import signal_1muNp
 from numu_tki import selection_1e1p 
 from numu_tki import signal_1e1p 
 from numu_tki import tki_calculators 
+from numu_tki import cc0pi_analyzer
 
 from microfit.selections import extract_variables_from_query
 
@@ -61,31 +62,107 @@ def cache_dataframe(func):
     except ImportError:
         default_cache_path = "dataframe_cache"
 
-    def wrapper(*args, enable_cache=False, cache_dir=default_cache_path, overwrite=False, **kwargs):
+#     def wrapper(*args, enable_cache=False, cache_dir=default_cache_path, overwrite=False, **kwargs):
 
+#         if not enable_cache:
+#             return func(*args, **kwargs)
+
+#         hash_value = generate_hash(*args, **kwargs)
+
+#         hdf_filepath = os.path.join(cache_dir, f"{hash_value}.h5")
+
+#         if not os.path.exists(cache_dir):
+#             os.mkdir(cache_dir)
+
+# #         if os.path.exists(hdf_filepath) and not overwrite:
+# #             df = pd.read_hdf(hdf_filepath, "data")
+#         if os.path.exists(hdf_filepath) and not overwrite:
+#             try:
+#                 return pd.read_hdf(hdf_filepath, "data")
+#             except Exception as e:
+#                   print(f"[cache] Corrupt/incompatible cache, rebuilding: {hdf_filepath} ({e})")
+
+#         df = func(*args, **kwargs)
+#         assert isinstance(df, pd.DataFrame)
+
+#         # --- make HDF5-fixed safe ---
+#         cat_cols = list(df.select_dtypes(include=["category"]).columns)
+#         for c in cat_cols:
+#             df[c] = df[c].astype(str)
+#         if isinstance(df.index, pd.CategoricalIndex):
+#             df.index = df.index.astype(str)
+#         df.to_hdf(hdf_filepath, key="data", mode="w", format="fixed")
+#         return df  
+        
+# #         else:
+# #             if overwrite:
+# #                 logger.debug(f"Overwriting cache file: {hdf_filepath}")
+# #             logger.debug(f"Calculating dataframe and saving to cache: {hdf_filepath}")
+# #             df = func(*args, **kwargs)
+# #             assert isinstance(df, pd.DataFrame), "Output should be a pandas DataFrame"
+# #             df.to_hdf(hdf_filepath, key="data", mode="w")
+# #             #df.to_hdf(hdf_filepath, key="data", mode="w", format="table") # Added to match BDT -> R. Tluanga
+
+# #         return df
+
+#     return wrapper
+
+
+    def wrapper(*args, enable_cache=False, cache_dir=default_cache_path, overwrite=False, **kwargs):
         if not enable_cache:
             return func(*args, **kwargs)
 
         hash_value = generate_hash(*args, **kwargs)
-
         hdf_filepath = os.path.join(cache_dir, f"{hash_value}.h5")
 
         if not os.path.exists(cache_dir):
             os.mkdir(cache_dir)
 
         if os.path.exists(hdf_filepath) and not overwrite:
-            df = pd.read_hdf(hdf_filepath, "data")
-        else:
-            if overwrite:
-                logger.debug(f"Overwriting cache file: {hdf_filepath}")
-            logger.debug(f"Calculating dataframe and saving to cache: {hdf_filepath}")
-            df = func(*args, **kwargs)
-            assert isinstance(df, pd.DataFrame), "Output should be a pandas DataFrame"
-            df.to_hdf(hdf_filepath, key="data", mode="w")
+            try:
+                df = pd.read_hdf(hdf_filepath, "data")
+                return df
+            except Exception as e:
+                print(f"[cache] Corrupt/incompatible cache, rebuilding: {hdf_filepath} ({e})")
+            # Close any dangling open files from PyTables
+            try:
+                import tables
+                tables.file._open_files.close_all()
+            except Exception:
+                pass
+            # Remove the bad file so we can rewrite cleanly
+            try:
+                os.remove(hdf_filepath)
+            except OSError:
+                pass
+
+       ##(Re)build the dataframe
+        df = func(*args, **kwargs)
+        assert isinstance(df, pd.DataFrame), "Output should be a pandas DataFrame"
+
+       #Sanitize dtypes/columns to keep HDF happy
+        df = df.copy()
+        df.columns = df.columns.astype(str)
+        for col in df.select_dtypes(include=["category"]).columns:
+            df[col] = df[col].astype(str)
+
+     # Close any other open handles just in case (e.g., if func used HDFStore)
+        try:
+            import tables
+            tables.file._open_files.close_all()
+        except Exception:
+            pass
+
+      # Atomic write: write to tmp then replace
+        tmp_path = hdf_filepath + ".tmp"
+        with pd.HDFStore(tmp_path, mode="w") as store:
+            store.put("data", df, format="fixed")#  data_columns=False)
+        os.replace(tmp_path, hdf_filepath)
 
         return df
 
     return wrapper
+
 
 def get_variables():
     VARDICT = {}
@@ -461,15 +538,106 @@ def add_paper_category(df, key):
     df.loc[(df["npi0"] == 0), "paper_category"] = 2
 
 
-def add_paper_category_1e1p(df, key):
-    df.loc[:, "category_1e1p"] = df[
-        "category"
-    ]  # makes a new column called 'category_1e1p' in df which copies the 'category'
-    if key in ["data"]:
-        return
-    df.loc[(df["nproton"] == 1), "category_1e1p"] = 12
-    df.loc[(df["nproton"] > 1), "category_1e1p"] = 13
+# def add_paper_category_1e1p(df, key):
+#     df.loc[:, "category_1e1p"] = df[
+#         "category"
+#     ]  # makes a new column called 'category_1e1p' in df which copies the 'category'
+#     if key in ["data"]:
+#         return
+#     df.loc[(df["nproton"] == 1), "category_1e1p"] = 12
+#     df.loc[(df["nproton"] > 1), "category_1e1p"] = 13
+def assign_category(up, df):
+    # Define the topological categories directly using the truth variables
 
+    # Load the branches required
+    df["nmuon"] = up.array("nmuon")
+
+    # Define category constants
+    k_nu_e_other = 1
+    k_nu_e_cc0pi0p = 10
+    k_nu_e_cc0pinp = 11
+    k_nu_mu_other = 2
+    k_nu_mu_pi0 = 21
+    k_nc = 3
+    k_nc_pi0 = 31
+    k_cosmic = 4
+    k_outfv = 5
+
+    # Initialize the category column
+    df["category_fixed"] = 6
+
+    # Loop over each row to assign categories
+    for idx, row in df.iterrows():
+        # No "data" category, we focus on simulated data
+        there_is_true_proton = row["nproton"] > 0
+        there_is_true_pi = row["npion"] > 0
+        there_is_true_mu = row["nmuon"] > 0
+        there_is_true_pi0 = row["npi0"] > 0
+        there_is_true_electron = row["nelec"] > 0
+
+        if not row["isVtxInFiducial"]:
+            df.at[idx, "category_fixed"] = k_outfv
+
+        elif abs(row["nu_pdg"]) == 12:  # electron neutrino
+            if there_is_true_electron:
+                if not there_is_true_pi and there_is_true_proton and not there_is_true_pi0:
+                    df.at[idx, "category_fixed"] = k_nu_e_cc0pinp
+                elif not there_is_true_pi and not there_is_true_proton and not there_is_true_pi0:
+                    df.at[idx, "category_fixed"] = k_nu_e_cc0pi0p
+                else:
+                    df.at[idx, "category_fixed"] = k_nu_e_other
+            else:
+                if not there_is_true_pi0:
+                    df.at[idx, "category_fixed"] = k_nc
+                else:
+                    df.at[idx, "category_fixed"] = k_nc_pi0
+
+        elif abs(row["nu_pdg"]) == 14:  # muon neutrino
+            if there_is_true_mu:
+                if there_is_true_pi0:
+                    df.at[idx, "category_fixed"] = k_nu_mu_pi0
+                else:
+                    df.at[idx, "category_fixed"] = k_nu_mu_other
+            else:
+                if not there_is_true_pi0:
+                    df.at[idx, "category_fixed"] = k_nc
+                else:
+                    df.at[idx, "category_fixed"] = k_nc_pi0
+
+        else:
+            df.at[idx, "category_fixed"] = k_cosmic
+
+
+
+# def add_paper_category_1e1p(df, key):
+#     # "category_fixed" is the same as "category" from the ntuple but with the bug fix applied
+#     df.loc[:, "category_1e1p"] = df["category_fixed"]
+#     if key in ["data", "ext"]:
+#         return
+#     # Based on the existing "category" column where 11 = 1eNp (N>0) and 10 = 1e0p
+#     # category_1e1p_tki: 13 = 1e2+p, 12 = 1e1p
+#     df.loc[df["category_fixed"].isin([11]), "category_1e1p"] = 10
+#     nue_cc0pi1p = ((df["nu_pdg"] == 12) & (df["isVtxInFiducial"] == 1) & (df["ccnc"] == 0) & (df["npi0"] == 0) & (df["npion"] == 0) & (df["elec_e"] > 0.03051) & (df["proton_ke"] > 0.05) & (df["nproton"] == 1))
+#     nue_cc0pi2p = ((df["nu_pdg"] == 12) & (df["isVtxInFiducial"] == 1) & (df["ccnc"] == 0) & (df["npi0"] == 0) & (df["npion"] == 0) & (df["elec_e"] > 0.03051) & (df["proton_ke"] > 0.05) & (df["nproton"] > 1))
+#     df.loc[df["category_fixed"].isin([11]) & nue_cc0pi1p, "category_1e1p"] = 12
+#     df.loc[df["category_fixed"].isin([11]) & nue_cc0pi2p, "category_1e1p"] = 13
+
+    
+#Added by R.Tluanga 12/03/25   
+# Not required for BDT selection -> skip for faster computation
+# def add_paper_category_1mu1p(df, key):
+#     df.loc[:, "category_1mu1p"] = df["category_fixed"]
+#     if key in ["data", "ext"]:
+#         return
+#     numu_cc0pi2p = ((abs(df["nu_pdg"]) == 14) & (df["TrueMuonIdx_1muNp"] != -1) & (df["TrueLeadProtonIdx_1muNp"] != -1) & (df["InFV_1muNp"] == True) & (df["TrueFSPions_1muNp"] == 0) & (df["TrueNProt_1muNp"] > 1))
+
+#     numu_cc0pi1p = ((abs(df["nu_pdg"]) == 14) & (df["TrueMuonIdx_1muNp"] != -1) & (df["TrueLeadProtonIdx_1muNp"] != -1) & (df["InFV_1muNp"] == True) & (df["TrueFSPions_1muNp"] == 0) & (df["TrueNProt_1muNp"] == 1))
+    
+#     df.loc[df["category_fixed"].isin([2]), "category_1mu1p"] = 22 #0p ->22
+#     #df.loc[df["category_fixed"].isin([2]) & numu_cc0pi2p, "category_1mu1p"] = 24
+#     df.loc[df["category_fixed"].isin([2]) & numu_cc0pi1p, "category_1mu1p"] = 23    
+#     df.loc[df["category_fixed"].isin([2]) & numu_cc0pi2p, "category_1mu1p"] = 24   
+    
 
 def add_paper_xsec_category(df, key):
     df.loc[:, "paper_category_xsec"] = df["category"]
@@ -528,7 +696,8 @@ def add_paper_categories(df, key):
     add_paper_category(df, key)
     add_paper_xsec_category(df, key)
     add_paper_numu_category(df, key)
-    add_paper_category_1e1p(df, key)
+    #add_paper_category_1e1p(df, key)
+    #add_paper_category_1mu1p(df, key)
 
 
 def load_data_run(
@@ -1891,6 +2060,29 @@ def process_uproot_numu(up, df):
     # df["trk_score_v"] = trk_score_v
     # df["trk_distance_v"] = trk_distance_v
     # df["trk_len_v"] = trk_len_v
+    
+    # Required for BDT- R. Tluanga - 12/10/2025
+    # CT: Adding track starts to the dataframe
+    df["trk_sce_start_x_v"]   = trk_start_x_v
+    df["trk_sce_start_y_v"]   = trk_start_y_v
+    df["trk_sce_start_z_v"]   = trk_start_z_v
+    df["trk_sce_end_x_v"]     = trk_end_x_v
+    df["trk_sce_end_y_v"]     = trk_end_y_v
+    df["trk_sce_end_z_v"]     = trk_end_z_v
+    df["trk_range_muon_mom_v"]= trk_range_muon_mom_v
+    df["trk_mcs_muon_mom_v"]  = trk_mcs_muon_mom_v
+
+    # CT: Adding pfp info to the dataframe
+    df["pfp_generation_v"]    = pfp_generation_v
+    df["trk_score_v"]         = trk_score_v
+    df["trk_distance_v"]      = trk_distance_v
+    df["trk_len_v"]           = trk_len_v
+    df["trk_llr_pid_score_v"] = trk_llr_pid_v
+    df["trk_energy_proton_v"] = trk_energy_proton_v
+    df["trk_dir_x_v"]         = up.array("trk_dir_x_v")
+    df["trk_dir_y_v"]         = up.array("trk_dir_y_v")
+    df["trk_dir_z_v"]         = up.array("trk_dir_z_v")
+
 
     trk_mask = trk_score_v > 0.0
     proton_mask = (trk_score_v > 0.5) & (trk_llr_pid_v < 0.0)
@@ -2020,7 +2212,8 @@ def get_rundict(run_number, category):
     thisfile_path = os.path.dirname(os.path.realpath(__file__))
 
     # New ntuple paths!
-    with open(os.path.join(thisfile_path, "data_paths_crt.yml"), "r") as f:
+    #with open(os.path.join(thisfile_path, "data_paths_crt.yml"), "r") as f:
+    with open(os.path.join(thisfile_path, "data_paths_fulldataset.yml"), "r") as f: # Maitreyee 10/09/2025
         pathdefs = yaml.safe_load(f)
 
     runpaths = pathdefs[category]
@@ -2080,17 +2273,46 @@ def load_sample(
         assert category in ["runs","numupresel","detvar"]
 
         # The path to the actual ROOT file
+#         if category != "detvar":
+#             rundict = get_rundict(run_number, category)
+#             no_presel_path = rundict["path"][:-1] # deletes the last '/'
+#             no_presel_path = no_presel_path.rstrip('nuepresel') # deletes the 'nuepresel' from path
+#             #data_path = os.path.join(ls.ntuple_path, rundict["path"], rundict[dataset]["file"] + append + ".root")
+#             data_path = os.path.join(ls.ntuple_path, no_presel_path, rundict[dataset]["file"] + append + ".root")
+
+            
+#         else: 
+#             rundict = get_rundict(run_number, category)
+#             subdir = "numupresel" if loadnumuvariables else "nuepresel"
+#             no_presel_path = rundict["path"][:-1] # deletes the last '/'
+#             no_presel_path = no_presel_path.rstrip('/detvar') # deletes the '/detvar' from path
+#             no_presel_path += "_detvar"
+#             #data_path = os.path.join(ls.ntuple_path, rundict["path"], subdir, rundict[variation][dataset]["file"] + append + ".root")
+#             data_path = os.path.join(ls.ntuple_path, no_presel_path, rundict[variation][dataset]["file"] + append + ".root")
+
         if category != "detvar":
             rundict = get_rundict(run_number, category)
-            data_path = os.path.join(ls.ntuple_path, rundict["path"], rundict[dataset]["file"] + append + ".root")
+            no_presel_path = rundict["path"][:-1] # deletes the last '/'
+            no_presel_path = no_presel_path.rstrip('nuepresel') # deletes the 'nuepresel' from path
+            #data_path = os.path.join(ls.ntuple_path, rundict["path"], rundict[dataset]["file"] + append + ".root")
+            data_path = os.path.join(ls.ntuple_path, no_presel_path, rundict[dataset]["file"] + append + ".root")
             
         else: 
             rundict = get_rundict(run_number, category)
             subdir = "numupresel" if loadnumuvariables else "nuepresel"
-            data_path = os.path.join(ls.ntuple_path, rundict["path"], subdir, rundict[variation][dataset]["file"] + append + ".root")
-       
-        if verbose: print("Loading ntuple file",data_path)
+            no_presel_path = rundict["path"][:-1] # deletes the last '/'
+            no_presel_path = no_presel_path.rstrip('/detvar') # deletes the '/detvar' from path
+            no_presel_path += "_detvar"
+            if run_number in ["4", "5"]: #preselected detvars for runs 4 and 5 in separate directories from the nominal CV n-tuple directories
+                #data_path = os.path.join(ls.ntuple_path, no_presel_path, subdir, rundict[variation][dataset]["file"] + append + ".root")
+                data_path = os.path.join(ls.ntuple_path, no_presel_path, rundict[variation][dataset]["file"] + append + ".root")
+                
+            else:
+                #data_path = os.path.join(ls.ntuple_path, rundict["path"], subdir, rundict[variation][dataset]["file"] + append + ".root")
+                data_path = os.path.join(ls.ntuple_path, no_presel_path, rundict[variation][dataset]["file"] + append + ".root")
  
+        if verbose: print("Loading ntuple file",data_path)
+     
         # try returning an empty dataframe
         if os.path.basename(data_path) == "dummy.root":
             if verbose: print("Using dummy file for run",run_number,"dataset",dataset)
@@ -2239,6 +2461,8 @@ def load_sample(
         if load_nue_tki:
             df = signal_1e1p.set_Signal1e1p(up,df)
             df = selection_1e1p.apply_selection_1e1p_tki(up,df) 
+        
+        assign_category(up, df)
 
     if use_bdt:
         add_bdt_scores(df)
@@ -2270,7 +2494,7 @@ def load_sample(
         # We have to keep certain variables in order for everything to even function
         vardict = get_variables()
         minimum_columns = vardict["WEIGHTS"] + vardict["SYSTVARS"] + vardict["WEIGHTSLEE"] + ["leeweight_shwmodel"]
-        minimum_columns += ["category", "paper_category", "paper_category_xsec", "category_1e1p", "interaction"]
+        minimum_columns += ["category", "paper_category", "paper_category_xsec", "category_1e1p", "category_1mu1p", "interaction"]
         keep_columns = set(keep_columns) | set(minimum_columns)
         # drop all columns that are not in keep_columns in place
         df.drop(columns=set(df.columns) - set(keep_columns), inplace=True)

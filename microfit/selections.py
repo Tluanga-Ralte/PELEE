@@ -468,7 +468,11 @@ preselection_categories = {
     'NSLICE': {'query': 'nslice==1', 'title': r"SliceID selection", 'dir': 'NSLICE'},
     'NUMU': {'query': NUMUPRESEL, 'title': r"$\nu_{\mu}$ selection", 'dir': 'NUMU'},
     'NUMUCRT': {'query': NUMUPRESELCRT, 'title': r"$\nu_{\mu}$ pre-selection w/ CRT", 'dir': 'NUMUCRT'},
-    'OneP': {'query': OnePPRESQ, 'title': '1e1p Presel.', 'dir': 'OneP'}
+    'OneP': {'query': OnePPRESQ, 'title': '1e1p Presel.', 'dir': 'OneP'},
+    
+    #Numu TKI preselection
+    'SIGNAL_1MUNP': {'query': "Signal_1muNp == True", 'title': 'True 1muNp Events', 'dir': 'SIGNAL_1MUNP'},
+    'SG_1MUNP': {'query': "sel_CCNp0pi == True", 'title': 'Selected 1muNp0pi Events', 'dir': 'SG_1MUNP'},
 
 }
 
@@ -549,8 +553,8 @@ selection_categories = {
 
     # NuMu TKI Selections
     'SIGNAL_1MU1P': {'query': "Signal_1mu1p == True", 'title': 'True 1mu1p Events', 'dir': 'SIGNAL_1MU1P'},
-    'SIGNAL_1MUNP': {'query': "Signal_1muNp == True", 'title': 'True 1muNp Events', 'dir': 'SIGNAL_1MUNP'},
-    'SG_1MUNP': {'query': "sel_CCNp0pi == True", 'title': 'Selected 1muNp0pi Events', 'dir': 'SG_1MUNP'},
+    #'SIGNAL_1MUNP': {'query': "Signal_1muNp == True", 'title': 'True 1muNp Events', 'dir': 'SIGNAL_1MUNP'},
+    #'SG_1MUNP': {'query': "sel_CCNp0pi == True", 'title': 'Selected 1muNp0pi Events', 'dir': 'SG_1MUNP'},
     'SG_1MU1P': {'query': "sel_CC1p0pi == True", 'title': 'Selected 1mu1p0pi Events', 'dir': 'SG_1MU1P'},
 
     # Two Shower Selections

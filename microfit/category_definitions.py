@@ -16,6 +16,11 @@ def get_category_label(category_column, category):
         return category_labels_1e1p.get(category, "Other")
     elif category_column == "interaction":
         return int_labels.get(category, "Other")
+    elif category_column == "category_1mu1p":    #Added by R.Tluanga 12/03/25
+        return category_labels.get(category, "Other")
+    elif category_column == "trk_pdg":
+        return pdg_labels.get(category, "Other")
+        #return category_labels_1mu1p.get(category, "Other")
     else:
         raise ValueError("Invalid category column: {}".format(category_column))
 
@@ -33,8 +38,13 @@ def get_categories(category_column):
         return list(paper_labels_xsec.keys())
     elif category_column == "category_1e1p":
         return list(category_labels_1e1p.keys())
+    elif category_column == "category_1mu1p":
+        return list(category_labels.keys())   
+        #return list(category_labels_1mu1p.keys())   
     elif category_column == "interaction":
         return list(int_labels.keys())
+    elif category_column == "trk_pdg":
+        return list(pdg_labels.keys())
     else:
         raise ValueError("Invalid category column: {}".format(category_column))
 
@@ -44,6 +54,8 @@ def get_category_color(category_column, category):
 
     if category_column == "interaction":
         return int_colors[category]
+    elif category_column == "trk_pdg":
+        return pdg_colors[abs(category)]
     return category_colors[category]
 
 
@@ -140,6 +152,40 @@ category_labels_1e1p = {
     6: r"other",
     0: r"No slice",
 }
+
+# # R.Tluanga
+# category_labels_1mu1p = {
+#     15: r"$\nu_{\mu}$ CC 0$\pi$Np", #16->15
+#     16: r"$\nu_{\mu}$ CC 0$\pi$1p", #15->16 (data_loading.py) numu_cc0pi1p(Np) selection is aasinged 16(15)  
+#      1: r"$\nu_e$ CC",
+#     10: r"$\nu_e$ CC0$\pi$0p",
+#     11: r"$\nu_e$ CC0$\pi$Np",
+#     12: r"$\nu_e$ CC0$\pi$1p",
+#     13: r"$\nu_e$ CC0$\pi$2+p",
+#     111: r"MiniBooNE LEE",
+#     2: r"$\nu_{\mu}$ CC",
+#     222: r"$\nu_{\mu}$ CC w/ Michel",
+#     21: r"$\nu_{\mu}$ CC $\pi^{0}$",
+#     22: r"$\nu_{\mu}$ CC 0p",
+#     23: r"$\nu_{\mu}$ CC 1p",
+#     24: r"$\nu_{\mu}$ CC 2p",
+#     25: r"$\nu_{\mu}$ CC 3+p",
+#     3: r"$\nu$ NC",
+#     31: r"$\nu$ NC $\pi^{0}$",
+#     4: r"Cosmic",
+#     5: r"Out. fid. vol.",
+#        # eta categories start with 80XX
+#     801: r"$\eta \rightarrow$ other",
+#     802: r"$\nu_{\mu} \eta \rightarrow \gamma\gamma$",
+#     803: r"1 $\pi^0$",
+#     804: r"2 $\pi^0$",
+#     807: r"3+ $\pi^0$",
+#     805: r"$\nu$ other",
+#     806: r"out of FV",
+#     6: r"other",
+#     0: r"No slice",
+# }    
+
 
 
 flux_labels = {1: r"$\pi$", 10: r"K", 111: r"MiniBooNE LEE", 0: r"backgrounds"}
@@ -252,6 +298,8 @@ category_colors = {
     802: "xkcd:lavender",
     806: "xkcd:crimson",
     805: "xkcd:cyan",
+    15: "xkcd:deep blue",  # Add a color for category 15
+    16: "xkcd:navy blue",  # Add a color for category 16
 }
 
 pdg_colors = {

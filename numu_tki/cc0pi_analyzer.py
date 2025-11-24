@@ -101,19 +101,32 @@ def is_meson_or_antimeson(pdg: int) -> bool:
     if abs_pdg in (110, 990, 998, 999, 100): return False
     return True
 
+
+try:
+    import awkward as ak
+except Exception:
+    ak = None
+
 def _force_list(v):
-    # uproot/awkward → python lists; pass through if already list
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, tuple):
+        return list(v)
+    if isinstance(v, (str, bytes, bytearray)):
+        return [v]  # treat strings as scalars, not char lists
+    if np is not None and isinstance(v, np.ndarray):
+        return v.tolist()
+    if ak is not None and getattr(ak, "is_any_array", None) and ak.is_any_array(v):
+        return ak.to_list(v)
+    # fallback: wrap scalar or try to list() if it’s a finite sequence
     try:
-        import awkward as ak
+        return list(v)
     except Exception:
-        ak = None
-    if isinstance(v, list): return v
-    if ak is not None:
-        try:
-            return ak.to_list(v)
-        except Exception:
-            return v
-    return v
+        return [v]
+
+
 
 def _pick_first(row, names, default=None):
     for n in names:
@@ -133,12 +146,17 @@ def compute_stvs(p3mu: np.ndarray, p3p: np.ndarray):
 
     # delta_alphaT
     den2 = (np.linalg.norm(p3mu[:2]) * np.linalg.norm(delta_pT_vec))
-    delta_alphaT = float(np.arccos(np.clip((-(p3mu[0]*delta_pT_vec[0] - 0 + -p3mu[1]*delta_pT_vec[1]))/den2, -1.0, 1.0))) if den2 > 0 else np.nan
-    # (same as C++, minus algebraic reshuffle: -p_mu dot ΔpT)
+#     delta_alphaT = float(np.arccos(np.clip((-(p3mu[0]*delta_pT_vec[0] - 0 + -p3mu[1]*delta_pT_vec[1]))/den2, -1.0, 1.0))) if den2 > 0 else np.nan
+    num2 = -(p3mu[0]*delta_pT_vec[0] + p3mu[1]*delta_pT_vec[1])
+    delta_alphaT = float(np.arccos(np.clip(num2/den2, -1.0, 1.0))) if den2 > 0 else np.nan
+
+    # (same as C++, minus algebraic reshuffle: -p_mu dot deltapT)
 
     Emu = math.sqrt(MUON_MASS**2 + float(np.dot(p3mu, p3mu)))
     Ep  = math.sqrt(PROTON_MASS**2 + float(np.dot(p3p,  p3p)))
     R = TARGET_MASS + p3mu[2] + p3p[2] - Emu - Ep
+    
+    Ecal = Emu + (Ep - PROTON_MASS) + BINDING_ENERGY 
 
     mf = TARGET_MASS - NEUTRON_MASS + BINDING_ENERGY
     delta_pL = 0.5*R - (mf*mf + delta_pT*delta_pT)/(2.0*R) if R != 0 else np.nan
@@ -168,6 +186,7 @@ def compute_stvs(p3mu: np.ndarray, p3p: np.ndarray):
         delta_pTx=delta_pTx,
         delta_pTy=delta_pTy,
         theta_mu_p=theta_mu_p,
+        Ecal=Ecal,
     )
 
 # ===== Booster I/O =====
@@ -180,25 +199,25 @@ def _load_booster(model_path: str):
 
 # ===== BDT classification (same 7 features, same class order: 0=Other,1=Mu,2=Pi,3=P) =====
 def classify_tracks_for_event(booster, row):
-    gen        = _force_list(row["pfp_generation_v"])
-    tscore     = _force_list(row["trk_score_v"])
-    trk_dist   = _force_list(row["trk_distance_v"])
-    pid_score  = _force_list(row["trk_llr_pid_score_v"])
-    chi2_p     = _force_list(row.get("trk_pid_chipr_v", []))
-    KE_p       = _force_list(row["trk_energy_proton_v"])
-    endx       = _force_list(row["trk_sce_end_x_v"])
-    endy       = _force_list(row["trk_sce_end_y_v"])
-    endz       = _force_list(row["trk_sce_end_z_v"])
-    n_trk_dau  = _force_list(row.get("pfp_trk_daughters_v", []))
-    n_shr_dau  = _force_list(row.get("pfp_shr_daughters_v", []))
-    mom_range  = _force_list(row["trk_range_muon_mom_v"])
-    mom_mcs    = _force_list(row["trk_mcs_muon_mom_v"])
+    # these are already lists thanks to one-time normalization
+    gen        = row["pfp_generation_v"]
+    tscore     = row["trk_score_v"]
+    trk_dist   = row["trk_distance_v"]
+    pid_score  = row["trk_llr_pid_score_v"]
+    chi2_p     = row.get("trk_pid_chipr_v", [])
+    KE_p       = row["trk_energy_proton_v"]
+    endx       = row["trk_sce_end_x_v"]
+    endy       = row["trk_sce_end_y_v"]
+    endz       = row["trk_sce_end_z_v"]
+    n_trk_dau  = row.get("pfp_trk_daughters_v", [])
+    n_shr_dau  = row.get("pfp_shr_daughters_v", [])
+    mom_range  = row["trk_range_muon_mom_v"]
+    mom_mcs    = row["trk_mcs_muon_mom_v"]
 
     n = len(gen)
     xgb_pid_vec   = [-1]*n
     xgb_score_vec = [[] for _ in range(n)]
 
-    # BDT feature "trk_contained" uses FV @ track END (matches C++)
     trk_end_contained = [in_FV(endx[i], endy[i], endz[i]) for i in range(n)]
 
     if n_trk_dau and n_shr_dau and len(n_trk_dau)==n and len(n_shr_dau)==n:
@@ -215,7 +234,7 @@ def classify_tracks_for_event(booster, row):
 
     feats, indices = [], []
     for i in range(n):
-        if int(gen[i]) != 2:              # only direct nu daughters
+        if int(gen[i]) != 2:
             continue
         if float(tscore[i]) <= TRACK_SCORE_CUT:
             continue
@@ -239,7 +258,7 @@ def classify_tracks_for_event(booster, row):
 
     if feats:
         dmat = xgb.DMatrix(np.asarray(feats, dtype=np.float32))
-        probs = booster.predict(dmat)  # [m,4]: other, mu, pi, p
+        probs = booster.predict(dmat)
         for idx, prob in zip(indices, probs):
             k = int(np.argmax(prob))
             xgb_pid_vec[idx] = k
@@ -249,6 +268,7 @@ def classify_tracks_for_event(booster, row):
     for k in xgb_pid_vec:
         counts[k] = counts.get(k, 0) + 1
     return xgb_pid_vec, xgb_score_vec, counts
+
 
 # ===== reco selection helpers =====
 def _pick_muon_candidate(xgb_pid_vec, xgb_score_vec):
@@ -335,31 +355,59 @@ def _categorize_mc(row):
         mc_no_fs_mesons=True,
         mc_is_signal=False,
         mc_is_cc0pi_signal=False,
+        mc_is_cc1p0pi_signal=False,
         mc_is_cc0pi_wc_signal=False,
         mc_num_protons=0,
+        mc_num_protons_in_window=0,
         mc_num_neutrons=0,
         mc_num_charged_pions=0,
         mc_num_wc_charged_pions=0,
-        category=kUnknown
+        category=kUnknown,
     )
 
-    mc_nu_pdg = int(_pick_first(row, ["mc_nu_pdg","nu_pdg","truth_nu_pdg"], 0) or 0)
+    # --- neutrino PDG ---
+    mc_nu_pdg = 0
+    for name in ("mc_nu_pdg", "nu_pdg", "truth_nu_pdg"):
+        if name in row:
+            val = row[name]
+            try:
+                mc_nu_pdg = int(val)
+                break
+            except Exception:
+                pass
+
     abs_pdg = abs(mc_nu_pdg)
     is_mc = abs_pdg in (ELECTRON_NEUTRINO, MUON_NEUTRINO, TAU_NEUTRINO)
     out["is_mc"] = is_mc
     if not is_mc:
-        return out  # data -> Unknown
+        return out  # data event
 
-    # truth vertex
-    vx = float(_pick_first(row, ["mc_nu_vtx_x","true_nu_vtx_x"], np.nan) or np.nan)
-    vy = float(_pick_first(row, ["mc_nu_vtx_y","true_nu_vtx_y"], np.nan) or np.nan)
-    vz = float(_pick_first(row, ["mc_nu_vtx_z","true_nu_vtx_z"], np.nan) or np.nan)
+    # --- truth vertex ---
+    vx = vy = vz = np.nan
+    if "mc_nu_vtx_x" in row and row["mc_nu_vtx_x"] is not None:
+        vx = float(row["mc_nu_vtx_x"])
+        vy = float(row["mc_nu_vtx_y"])
+        vz = float(row["mc_nu_vtx_z"])
+    elif "true_nu_vtx_x" in row and row["true_nu_vtx_x"] is not None:
+        vx = float(row["true_nu_vtx_x"])
+        vy = float(row["true_nu_vtx_y"])
+        vz = float(row["true_nu_vtx_z"])
+
     out["mc_vertex_in_FV"] = in_FV(vx, vy, vz)
 
-    # CC vs NC & flavor
-    ccnc = int(_pick_first(row, ["mc_ccnc","ccnc"], NEUTRAL_CURRENT) or NEUTRAL_CURRENT)
+    # --- CC vs NC ---
+    ccnc = NEUTRAL_CURRENT
+    for name in ("mc_ccnc", "ccnc"):
+        if name in row and row[name] is not None:
+            try:
+                ccnc = int(row[name])
+            except Exception:
+                ccnc = NEUTRAL_CURRENT
+            break
+
     out["mc_neutrino_is_numu"] = (mc_nu_pdg == MUON_NEUTRINO)
 
+    # early categories (these match the C++ structure)
     if not out["mc_vertex_in_FV"]:
         out["category"] = kOOFV
         return out
@@ -367,54 +415,71 @@ def _categorize_mc(row):
         out["category"] = kNC
         return out
     elif not out["mc_neutrino_is_numu"]:
-        out["category"] = kNuECC if (mc_nu_pdg == ELECTRON_NEUTRINO and ccnc == CHARGED_CURRENT) else kOther
+        if mc_nu_pdg == ELECTRON_NEUTRINO and ccnc == CHARGED_CURRENT:
+            out["category"] = kNuECC
+        else:
+            out["category"] = kOther
         return out
 
-    # daughters
-    pdgs = _force_list(_pick_first(row, ["mc_pdg"], [])) or []
-    E    = _force_list(_pick_first(row, ["mc_E"],   [])) or []
-    px   = _force_list(_pick_first(row, ["mc_px"],  [])) or []
-    py   = _force_list(_pick_first(row, ["mc_py"],  [])) or []
-    pz   = _force_list(_pick_first(row, ["mc_pz"],  [])) or []
+    # --- daughters (truth final state) ---
+    pdgs = _force_list(row.get("mc_pdg", []))
+    E    = _force_list(row.get("mc_E",   []))
+    px   = _force_list(row.get("mc_px",  []))
+    py   = _force_list(row.get("mc_py",  []))
+    pz   = _force_list(row.get("mc_pz",  []))
 
     lead_p_mom = LOW_FLOAT
 
-    for i in range(len(pdgs)):
+    for i, pdg_val in enumerate(pdgs):
         try:
-            pdg = int(pdgs[i])
+            pdg = int(pdg_val)
         except Exception:
             continue
 
-        # any meson?
+        # meson flag
         if is_meson_or_antimeson(pdg):
             out["mc_no_fs_mesons"] = False
 
-        # muon momentum window
-        if pdg == MUON and i < len(E):
-            mom = real_sqrt(float(E[i])**2 - MUON_MASS**2)
+        # guard against too-short E list
+        Ej = None
+        if i < len(E):
+            try:
+                Ej = float(E[i])
+            except Exception:
+                Ej = None
+
+        # muon
+        if pdg == MUON and Ej is not None:
+            mom = real_sqrt(Ej*Ej - MUON_MASS*MUON_MASS)
             if MUON_P_MIN_MOM_CUT <= mom <= MUON_P_MAX_MOM_CUT:
                 out["mc_muon_in_mom_range"] = True
             if MUON_P_MIN_WC_MOM_CUT <= mom <= MUON_P_MAX_MOM_CUT:
                 out["mc_muon_in_wc_mom_range"] = True
 
-        elif pdg == PROTON and i < len(E):
-            mom = real_sqrt(float(E[i])**2 - PROTON_MASS**2)
+        # proton
+        elif pdg == PROTON and Ej is not None:
+            mom = real_sqrt(Ej*Ej - PROTON_MASS*PROTON_MASS)
             if mom > lead_p_mom:
                 lead_p_mom = mom
             out["mc_num_protons"] += 1
+            if LEAD_P_MIN_MOM_CUT <= mom <= LEAD_P_MAX_MOM_CUT:
+                out["mc_num_protons_in_window"] += 1
 
+        # neutron
         elif pdg == NEUTRON:
             out["mc_num_neutrons"] += 1
 
-        elif abs(pdg) == PI_PLUS and i < len(E):
+        # charged pion
+        elif abs(pdg) == PI_PLUS and Ej is not None:
             out["mc_num_charged_pions"] += 1
-            mom = real_sqrt(float(E[i])**2 - PI_PLUS_MASS**2)
+            mom = real_sqrt(Ej*Ej - PI_PLUS_MASS*PI_PLUS_MASS)
             if mom > CHARGED_PI_MOM_CUT:
                 out["mc_no_charged_pi_above_threshold"] = False
             if mom > CHARGED_PI_WC_MOM_CUT:
                 out["mc_no_charged_pi_above_wc_threshold"] = False
                 out["mc_num_wc_charged_pions"] += 1
 
+        # pi0
         elif pdg == PI_ZERO:
             out["mc_no_fs_pi0"] = False
 
@@ -422,26 +487,55 @@ def _categorize_mc(row):
     if LEAD_P_MIN_MOM_CUT <= lead_p_mom <= LEAD_P_MAX_MOM_CUT:
         out["mc_lead_p_in_mom_range"] = True
 
-    # signal flags (C++ definitions)
-    out["mc_is_signal"] = (out["mc_vertex_in_FV"] and out["mc_neutrino_is_numu"] and
-                           out["mc_muon_in_mom_range"] and out["mc_lead_p_in_mom_range"] and
-                           out["mc_no_fs_mesons"])
+    # --- signal flags (mirror C++ definitions) ---
+    out["mc_is_signal"] = (
+        out["mc_vertex_in_FV"] and
+        out["mc_neutrino_is_numu"] and
+        out["mc_muon_in_mom_range"] and
+        out["mc_lead_p_in_mom_range"] and
+        out["mc_no_fs_mesons"]
+    )
 
-    out["mc_is_cc0pi_signal"] = (out["mc_vertex_in_FV"] and out["mc_neutrino_is_numu"] and
-                                 out["mc_muon_in_mom_range"] and out["mc_no_fs_pi0"] and
-                                 out["mc_no_charged_pi_above_threshold"])
+    out["mc_is_cc0pi_signal"] = (
+        out["mc_vertex_in_FV"] and
+        out["mc_neutrino_is_numu"] and
+        out["mc_muon_in_mom_range"] and
+        out["mc_no_fs_pi0"] and
+        out["mc_no_charged_pi_above_threshold"]
+    )
+    
+    out["mc_is_cc1p0pi_signal"] = (
+        out["mc_is_cc0pi_signal"] and
+        out["mc_num_protons_in_window"] == 1
+    )
 
-    out["mc_is_cc0pi_wc_signal"] = (out["mc_vertex_in_FV"] and out["mc_neutrino_is_numu"] and
-                                    out["mc_muon_in_wc_mom_range"] and out["mc_no_fs_pi0"] and
-                                    out["mc_no_charged_pi_above_wc_threshold"])
+    out["mc_is_cc0pi_wc_signal"] = (
+        out["mc_vertex_in_FV"] and
+        out["mc_neutrino_is_numu"] and
+        out["mc_muon_in_wc_mom_range"] and
+        out["mc_no_fs_pi0"] and
+        out["mc_no_charged_pi_above_wc_threshold"]
+    )
 
-    # category by interaction when in CC0pi signal
-    interaction = int(_pick_first(row, ["mc_interaction","interaction"], -1) or -1)
+    # --- category by interaction mode for cc0pi signal ---
+    interaction = -1
+    for name in ("mc_interaction", "interaction"):
+        if name in row and row[name] is not None:
+            try:
+                interaction = int(row[name])
+            except Exception:
+                interaction = -1
+            break
+
     if out["mc_is_cc0pi_signal"]:
-        if interaction == 0:      out["category"] = kSignalCCQE
-        elif interaction == 10:   out["category"] = kSignalCCMEC
-        elif interaction == 1:    out["category"] = kSignalCCRES
-        else:                     out["category"] = kSignalOther
+        if interaction == 0:
+            out["category"] = kSignalCCQE
+        elif interaction == 10:
+            out["category"] = kSignalCCMEC
+        elif interaction == 1:
+            out["category"] = kSignalCCRES
+        else:
+            out["category"] = kSignalOther
     elif (not out["mc_no_fs_pi0"]) or (not out["mc_no_charged_pi_above_threshold"]):
         out["category"] = kNuMuCCNpi
     else:
@@ -449,34 +543,38 @@ def _categorize_mc(row):
 
     return out
 
+
 # ===== per-event main =====
 def analyze_event(row, booster):
     # ensure list-like branches are lists
-    for k in [
-        "pfp_generation_v","trk_score_v","trk_distance_v","trk_len_v",
-        "trk_llr_pid_score_v","trk_pid_chipr_v","trk_energy_proton_v",
-        "trk_dir_x_v","trk_dir_y_v","trk_dir_z_v",
-        "trk_sce_end_x_v","trk_sce_end_y_v","trk_sce_end_z_v",
-        "trk_sce_start_x_v","trk_sce_start_y_v","trk_sce_start_z_v",
-        "trk_range_muon_mom_v","trk_mcs_muon_mom_v",
-        "pfp_trk_daughters_v","pfp_shr_daughters_v",
-        "trk_bragg_mu_fwd_preferred_v","trk_pid_chimu_v"
-    ]:
-        if k in row:
-            row[k] = _force_list(row[k])
+#     for k in [
+#         "pfp_generation_v","trk_score_v","trk_distance_v","trk_len_v",
+#         "trk_llr_pid_score_v","trk_pid_chipr_v","trk_energy_proton_v",
+#         "trk_dir_x_v","trk_dir_y_v","trk_dir_z_v",
+#         "trk_sce_end_x_v","trk_sce_end_y_v","trk_sce_end_z_v",
+#         "trk_sce_start_x_v","trk_sce_start_y_v","trk_sce_start_z_v",
+#         "trk_range_muon_mom_v","trk_mcs_muon_mom_v",
+#         "pfp_trk_daughters_v","pfp_shr_daughters_v",
+#         "trk_bragg_mu_fwd_preferred_v","trk_pid_chimu_v",
+       
+#         "mc_pdg","mc_E","mc_px","mc_py","mc_pz",
+#     ]:
+#         if k in row:
+#             row[k] = _force_list(row[k])
 
     # --- MC truth block (categorize + truth STVs) ---
     mc = _categorize_mc(row)
 
     # truth STVs (only if we have a CC muon and a leading proton)
     mc_stv = {f"mc_{k}": np.nan for k in
-              ["delta_pT","delta_phiT","delta_alphaT","delta_pL","pn","delta_pTx","delta_pTy","theta_mu_p"]}
+              ["delta_pT","delta_phiT","delta_alphaT","delta_pL","pn","delta_pTx","delta_pTy","theta_mu_p","Ecal"]}
     if mc["is_mc"]:
-        pdgs = _force_list(_pick_first(row, ["mc_pdg"], [])) or []
-        px   = _force_list(_pick_first(row, ["mc_px"],  [])) or []
-        py   = _force_list(_pick_first(row, ["mc_py"],  [])) or []
-        pz   = _force_list(_pick_first(row, ["mc_pz"],  [])) or []
-
+        pdgs = row.get("mc_pdg", []) or []
+        E    = row.get("mc_E", []) or []
+        px   = row.get("mc_px",  []) or []
+        py   = row.get("mc_py",  []) or []
+        pz   = row.get("mc_pz",  []) or []
+     
         mu_idx = next((i for i,p in enumerate(pdgs) if int(p) == MUON), None)
 
         lead_idx = None; lead_mag2 = LOW_FLOAT
@@ -556,7 +654,7 @@ def analyze_event(row, booster):
                                       float(row["trk_dir_z_v"][mu_idx]),
                                       mu_p)
 
-        # special case (not contained & cosθ < −0.9) → invalidate
+        # special case (not contained & cosθ < −0.9) -> invalidate
         if (not muon_contained) and np.isfinite(p3mu[2]):
             norm = np.linalg.norm(p3mu)
             costh = p3mu[2]/(norm if norm>0 else 1.0)
@@ -612,7 +710,7 @@ def analyze_event(row, booster):
     have_mu = np.all(np.isfinite(p3mu)) and (p3mu[0] != LOW_FLOAT)
     have_p  = np.all(np.isfinite(p3p))  and (p3p[0]  != LOW_FLOAT)
     stv = compute_stvs(p3mu, p3p) if (have_mu and have_p) else {k: np.nan for k in
-        ["delta_pT","delta_phiT","delta_alphaT","delta_pL","pn","delta_pTx","delta_pTy","theta_mu_p"]}
+        ["delta_pT","delta_phiT","delta_alphaT","delta_pL","pn","delta_pTx","delta_pTy","theta_mu_p","Ecal"]}
 
     # --- pack output
     out = dict(
@@ -669,12 +767,36 @@ def analyze_event(row, booster):
     return out
 
 # ===== public API =====
+# def apply_ccnp0pi_stv(df: pd.DataFrame, model_path: str) -> pd.DataFrame:
+#     """
+#     Adds CCNp0pi selection booleans, candidate indices, BDT outputs, reco p3 vectors,
+#     reco STVs, AND MC-truth category/flags + truth STVs (if MC branches present).
+#     Expects PeLEE-like branches as list-like columns. Returns a new DataFrame.
+#     """
+#     booster = _load_booster(model_path)
+
+#     required = [
+#         "pfp_generation_v","trk_score_v","trk_distance_v","trk_len_v",
+#         "trk_llr_pid_score_v","trk_energy_proton_v",
+#         "trk_dir_x_v","trk_dir_y_v","trk_dir_z_v",
+#         "trk_sce_end_x_v","trk_sce_end_y_v","trk_sce_end_z_v",
+#         "trk_sce_start_x_v","trk_sce_start_y_v","trk_sce_start_z_v",
+#         "trk_range_muon_mom_v","trk_mcs_muon_mom_v",
+#         "topological_score","CosmicIP",
+#         "reco_nu_vtx_sce_x","reco_nu_vtx_sce_y","reco_nu_vtx_sce_z",
+#         "nslice",
+#     ]
+#     missing = [c for c in required if c not in df.columns]
+#     if missing:
+#         raise KeyError(f"Missing required columns: {missing}")
+
+#     # MC truth arrays are optional; if present, they’ll be used automatically:
+#     # mc_pdg, mc_E, mc_px, mc_py, mc_pz, mc_nu_pdg/nu_pdg/truth_nu_pdg,
+#     # mc_ccnc/ccnc, mc_interaction/interaction, mc_nu_vtx_{x,y,z}/true_nu_vtx_{x,y,z}
+
+#     out = df.apply(lambda r: analyze_event(r, booster), axis=1, result_type="expand")
+#     return pd.concat([df.reset_index(drop=True), out.reset_index(drop=True)], axis=1)
 def apply_ccnp0pi_stv(df: pd.DataFrame, model_path: str) -> pd.DataFrame:
-    """
-    Adds CCNp0pi selection booleans, candidate indices, BDT outputs, reco p3 vectors,
-    reco STVs, AND MC-truth category/flags + truth STVs (if MC branches present).
-    Expects PeLEE-like branches as list-like columns. Returns a new DataFrame.
-    """
     booster = _load_booster(model_path)
 
     required = [
@@ -692,9 +814,26 @@ def apply_ccnp0pi_stv(df: pd.DataFrame, model_path: str) -> pd.DataFrame:
     if missing:
         raise KeyError(f"Missing required columns: {missing}")
 
-    # MC truth arrays are optional; if present, they’ll be used automatically:
-    # mc_pdg, mc_E, mc_px, mc_py, mc_pz, mc_nu_pdg/nu_pdg/truth_nu_pdg,
-    # mc_ccnc/ccnc, mc_interaction/interaction, mc_nu_vtx_{x,y,z}/true_nu_vtx_{x,y,z}
+    # ---- ONE-TIME normalization of vector-like columns (reco + MC) ----
+    vector_cols = [
+        # reco
+        "pfp_generation_v","trk_score_v","trk_distance_v","trk_len_v",
+        "trk_llr_pid_score_v","trk_pid_chipr_v","trk_energy_proton_v",
+        "trk_dir_x_v","trk_dir_y_v","trk_dir_z_v",
+        "trk_sce_end_x_v","trk_sce_end_y_v","trk_sce_end_z_v",
+        "trk_sce_start_x_v","trk_sce_start_y_v","trk_sce_start_z_v",
+        "trk_range_muon_mom_v","trk_mcs_muon_mom_v",
+        "pfp_trk_daughters_v","pfp_shr_daughters_v",
+        "trk_bragg_mu_fwd_preferred_v","trk_pid_chimu_v",
+        # MC (optional)
+        "mc_pdg","mc_E","mc_px","mc_py","mc_pz",
+    ]
+    present = [c for c in vector_cols if c in df.columns]
+    for c in present:
+        df[c] = df[c].map(_force_list)  # <- normalize once
 
+    # no more _force_list calls inside analyze_event / classifier
     out = df.apply(lambda r: analyze_event(r, booster), axis=1, result_type="expand")
     return pd.concat([df.reset_index(drop=True), out.reset_index(drop=True)], axis=1)
+
+

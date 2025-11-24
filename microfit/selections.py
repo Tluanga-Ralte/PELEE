@@ -625,6 +625,62 @@ selection_categories = {
 
 }
 
+##### Tluanga Ralte -> 12/11/2025
+# For cc0pi_analyzer.py
+# --- in selections.py ---
+
+preselection_categories["sel_CCNp0pi"] = {
+    "query": "sel_CCNp0pi == True",
+    "title": "Reco 1μNp0π preselection",
+    "dir":   "sel_CCNp0pi",
+}
+
+selection_categories["sel_CC1p0pi"] = {
+    "query": "sel_CC1p0pi == True",
+    "title": "Reco 1μ1p0π selection",
+    "dir":   "sel_CC1p0pi",
+}
+
+
+# # Preselections 
+# preselection_categories.update({
+#     "sel_CCNp0pi": {
+#         "label": "1muNp presel (BDT)",
+#         "tex": r"1\mu Np (presel)",
+#         "title": "1muNp preselection (BDT)",        
+#         "dir": "SEL_CCNp0pi",                     
+#         "query": "sel_CCNp0pi"
+#     },
+#     "sel_CC0pi": {
+#         "label": "CC0pi (BDT)",
+#         "tex": r"CC0\pi",
+#         "title": "CC0pi selection (BDT)",           
+#         "dir": "SEL_CC0pi",
+#         "query": "sel_CC0pi"
+#     },
+#     "sel_CC0pi_wc": {
+#         "label": "CC0pi (WC, BDT)",
+#         "tex": r"CC0\pi\,(WC)",
+#         "title": "CC0pi (WC) selection (BDT)",     
+#         "dir": "SEL_CC0pi_wc",
+#         "query": "sel_CC0pi_wc"
+#     },
+# })
+
+# #selections
+# selection_categories.update({
+#     "sel_CC1p0pi": {
+#         "label": "1mu1p (BDT)",
+#         "tex": r"1\mu 1p",
+#         "title": "1μ1p selection (BDT)",           
+#         "short_title": "1mu1p (BDT)",               
+#         "dir": "SEL_CC1p0pi",                      
+#         "query": "sel_CC1p0pi"
+#     },
+# })
+
+########
+
 stages_queries = {
     1 : ' and '.join([HIGH_ENERGY, NPPRESQ_one_shower]),
     2 : ' and '.join([LOW_PID, NPPRESQ_one_shower]),

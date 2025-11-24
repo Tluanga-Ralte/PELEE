@@ -46,8 +46,13 @@ def load_runs_with_cc0pi_bdt(run_numbers, *, model_path, enable_cache=False, ove
     mc = rundata.get("mc")
     print("Running the CC0pi-BDT....")
     if mc is not None:
-        ident = generate_hash(df_fp=_df_fp(mc), model=os.path.abspath(model_path),
-                              model_md5=_hash_file(model_path), code_md5=_code_fp())
+         # use only the some sample for test
+        #mc = mc.head(500).reset_index(drop=True)
+        ident = generate_hash(model=os.path.abspath(model_path), model_md5=_hash_file(model_path))
+        #ident = generate_hash(df_fp=_df_fp(mc), model=os.path.abspath(model_path),
+         #                     model_md5=_hash_file(model_path), code_md5=_code_fp())
+        
+        
         rundata["mc"] = _apply_cc0pi_cached(mc, model_path, _identity=ident,
                                             enable_cache=enable_cache, overwrite=overwrite)
     return rundata, weights, data_pot

@@ -2033,6 +2033,8 @@ def process_uproot_numu(up, df):
     trk_start_y_v = up.array("trk_sce_start_y_v")
     trk_start_z_v = up.array("trk_sce_start_z_v")
    
+    trk_bragg_mu_fwd_preferred_v = up.array("trk_bragg_mu_fwd_preferred_v")
+    trk_pid_chimu_v              = up.array("trk_pid_chimu_v")
 
     trk_energy_proton_v = up.array("trk_energy_proton_v")  # range-based proton kinetic energy
     trk_range_muon_mom_v = up.array("trk_range_muon_mom_v")  # range-based muon momentum
@@ -2044,23 +2046,18 @@ def process_uproot_numu(up, df):
     trk_calo_energy_y_v = up.array("trk_calo_energy_y_v")
     trk_pfp_id_v = up.array("trk_pfp_id_v")
     pfp_pdg_v = up.array("backtracked_pdg")
+     
+    #Required for BDT- R. Tluanga - 02/11/2025    
+    #Required for BDT mc truth info
 
-    # CT: Adding track starts to the dataframe
-    # df["trk_sce_start_x_v"] = trk_start_x_v
-    # df["trk_sce_start_y_v"] = trk_start_y_v
-    # df["trk_sce_start_z_v"] = trk_start_z_v
-    # df["trk_sce_end_x_v"] = trk_end_x_v
-    # df["trk_sce_end_y_v"] = trk_end_y_v
-    # df["trk_sce_end_z_v"] = trk_end_z_v
-    # df["trk_range_muon_mom_v"] = trk_range_muon_mom_v
-    # df["trk_mcs_muon_mom_v"] = trk_mcs_muon_mom_v
-
-    # CT: Adding pfp info to the dataframe
-    # df["pfp_generation_v"] = pfp_generation_v
-    # df["trk_score_v"] = trk_score_v
-    # df["trk_distance_v"] = trk_distance_v
-    # df["trk_len_v"] = trk_len_v
+    df["ccnc"]   = up.array("ccnc") 
+    df["mc_pdg"] = up.array("mc_pdg")   
+    df["mc_E"]   = up.array("mc_E")
+    df["mc_px"]  = up.array("mc_px")
+    df["mc_py"]  = up.array("mc_py")
+    df["mc_pz"]  = up.array("mc_pz")
     
+        
     # Required for BDT- R. Tluanga - 12/10/2025
     # CT: Adding track starts to the dataframe
     df["trk_sce_start_x_v"]   = trk_start_x_v
@@ -2071,7 +2068,7 @@ def process_uproot_numu(up, df):
     df["trk_sce_end_z_v"]     = trk_end_z_v
     df["trk_range_muon_mom_v"]= trk_range_muon_mom_v
     df["trk_mcs_muon_mom_v"]  = trk_mcs_muon_mom_v
-
+    
     # CT: Adding pfp info to the dataframe
     df["pfp_generation_v"]    = pfp_generation_v
     df["trk_score_v"]         = trk_score_v
@@ -2082,7 +2079,9 @@ def process_uproot_numu(up, df):
     df["trk_dir_x_v"]         = up.array("trk_dir_x_v")
     df["trk_dir_y_v"]         = up.array("trk_dir_y_v")
     df["trk_dir_z_v"]         = up.array("trk_dir_z_v")
-
+    
+    df["trk_bragg_mu_fwd_preferred_v"] = trk_bragg_mu_fwd_preferred_v
+    df["trk_pid_chimu_v"]              = trk_pid_chimu_v
 
     trk_mask = trk_score_v > 0.0
     proton_mask = (trk_score_v > 0.5) & (trk_llr_pid_v < 0.0)
@@ -2150,6 +2149,8 @@ def process_uproot_numu(up, df):
     # df['n_tracks_contained'] = contained_track_mask.sum()
     df["n_protons_tot"] = proton_mask.sum()
     df["n_showers_tot"] = shr_mask.sum()
+    
+    print(f'shape of the loaded df: {df.shape}')
 
     return
 

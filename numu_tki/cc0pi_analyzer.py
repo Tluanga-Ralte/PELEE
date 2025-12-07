@@ -693,7 +693,7 @@ def analyze_event(row, booster):
     # --- final decisions
     sel_CCNp0pi = (sel_nu_mu_cc and sel_no_reco_showers and
                    muon_passed_mom_cuts and muon_contained and muon_quality_ok and
-                   has_p_candidate and passed_proton_pid_cut and protons_contained and
+                   has_p_candidate and protons_contained and
                    lead_p_passed_mom_cuts)
 
     sel_CC1p0pi = (sel_CCNp0pi and num_p_candidates == 1)
@@ -835,5 +835,4 @@ def apply_ccnp0pi_stv(df: pd.DataFrame, model_path: str) -> pd.DataFrame:
     # no more _force_list calls inside analyze_event / classifier
     out = df.apply(lambda r: analyze_event(r, booster), axis=1, result_type="expand")
     return pd.concat([df.reset_index(drop=True), out.reset_index(drop=True)], axis=1)
-
 
